@@ -1,0 +1,30 @@
+# 비밀/로컬 설정 (API 키, DB 비밀번호 등)
+config.py
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# 가상환경
+.venv/
+venv/
+ENV/
+
+# 도구 / OS
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.DS_Store
+
+# Hugging Face / 모델 캐시 (로컬에만 두는 경우)
+# .cache/
