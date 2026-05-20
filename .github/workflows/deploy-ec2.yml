@@ -51,7 +51,6 @@ jobs:
           DEPLOY_PATH="/opt/finedu-ai"
           ENV_PATH="${DEPLOY_PATH}/finedu-ai.env"
           CONTAINER_NAME="finedu-ai"
-          NETWORK_NAME="finedu-net"
 
           mkdir -p ~/.ssh
           echo "$SSH_PRIVATE_KEY" > ~/.ssh/ec2_deploy
@@ -63,9 +62,9 @@ jobs:
           import shlex
 
           values = {
-              "APP_HOST": "0.0.0.0",
+              "APP_HOST": "127.0.0.1",
               "APP_PORT": "8000",
-              "DB_HOST": os.getenv("AI_DB_HOST") or "host.docker.internal",
+              "DB_HOST": os.getenv("AI_DB_HOST") or "127.0.0.1",
               "DB_PORT": os.getenv("AI_DB_PORT") or "5432",
               "DB_NAME": os.getenv("AI_DB_NAME") or "finedu",
               "DB_USER": os.getenv("AI_DB_USER") or "",
@@ -92,15 +91,12 @@ jobs:
             sudo chown root:root "${ENV_PATH}"
             sudo chmod 600 "${ENV_PATH}"
             sudo docker load -i /tmp/finedu-ai-image.tar.gz
-            sudo docker network create "${NETWORK_NAME}" >/dev/null 2>&1 || true
             sudo docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
             sudo docker run -d \
               --name "${CONTAINER_NAME}" \
               --restart unless-stopped \
-              --network "${NETWORK_NAME}" \
-              --add-host host.docker.internal:host-gateway \
+              --network host \
               --env-file "${ENV_PATH}" \
-              -p 127.0.0.1:8000:8000 \
               finedu-ai:${{ github.sha }}
             for i in {1..30}; do
               if curl -fsS http://127.0.0.1:8000/health; then
