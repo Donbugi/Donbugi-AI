@@ -76,8 +76,6 @@ jobs:
               print(f"{key}={shlex.quote(value)}")
           PY
 
-          scp -i ~/.ssh/ec2_deploy -o StrictHostKeyChecking=accept-new fined-ai.env "${EC2_SSH_USER}@${HOST}:/tmp/finedu-ai.env"
-
           ssh -i ~/.ssh/ec2_deploy -o StrictHostKeyChecking=accept-new "${EC2_SSH_USER}@${HOST}" bash -s << EOF
             set -euo pipefail
             if ! command -v docker >/dev/null 2>&1; then
@@ -86,10 +84,9 @@ jobs:
             fi
             sudo systemctl enable --now docker
             sudo mkdir -p "${DEPLOY_PATH}"
-            sudo mv /tmp/finedu-ai.env "${ENV_PATH}"
-            sudo chown root:root "${ENV_PATH}"
-            sudo chmod 600 "${ENV_PATH}"
           EOF
+
+          ssh -i ~/.ssh/ec2_deploy -o StrictHostKeyChecking=accept-new "${EC2_SSH_USER}@${HOST}" "sudo tee '${ENV_PATH}' >/dev/null && sudo chown root:root '${ENV_PATH}' && sudo chmod 600 '${ENV_PATH}'" < fined-ai.env
 
           gzip -dc finedu-ai-image.tar.gz | ssh -i ~/.ssh/ec2_deploy -o StrictHostKeyChecking=accept-new "${EC2_SSH_USER}@${HOST}" "sudo docker load"
 
