@@ -1,0 +1,13 @@
+[Unit]
+Description=finEdu AI Docker container
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/docker start finedu-ai
+ExecStop=/usr/bin/docker stop finedu-ai
+
+[Install]
+WantedBy=multi-user.target

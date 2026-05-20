@@ -1,5 +1,5 @@
 """
-DB에서 기사 내용을 읽어 Claude Haiku로 객관식 퀴즈 4문항(4지선다) 생성 후
+DB에서 기사 내용을 읽어 Claude Haiku로 객관식 퀴즈 1문항(4지선다) 생성 후
 API 응답으로 반환
 """
 import json
@@ -13,9 +13,9 @@ from fastapi import FastAPI, HTTPException
 from psycopg2.extras import RealDictCursor
 from pydantic import BaseModel, Field
 
-from config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL, DB_CONFIG
+from config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL, APP_HOST, APP_PORT, DB_CONFIG
 
-NUM_QUESTIONS = 4
+NUM_QUESTIONS = 1
 MAX_CONTENT_CHARS = 18_000
 MAX_OUTPUT_TOKENS = 4096
 
@@ -24,6 +24,7 @@ app = FastAPI(title="Quiz generation (Claude Haiku)", version="1.0.0")
 
 class QuizRequest(BaseModel):
     article_id: int = Field(..., description="articles.article_id")
+    content: Optional[str] = Field(None, description="기사 본문. 있으면 DB 조회 대신 사용")
 
 
 class QuizItem(BaseModel):
@@ -38,6 +39,19 @@ class QuizResponse(BaseModel):
     quiz: List[QuizItem]
 
 
+class InterestTopic(BaseModel):
+    name: str
+    count: int = 0
+
+
+class InterestInsightRequest(BaseModel):
+    topics: List[InterestTopic]
+
+
+class InterestInsightResponse(BaseModel):
+    insight: str
+
+
 def get_client() -> Anthropic:
     if not ANTHROPIC_API_KEY or not str(ANTHROPIC_API_KEY).strip():
         raise RuntimeError(
@@ -48,6 +62,14 @@ def get_client() -> Anthropic:
 
 def get_model_id() -> str:
     return (ANTHROPIC_MODEL or "").strip() or "claude-haiku-4-5"
+
+
+def collect_message_text(message) -> str:
+    text_parts: List[str] = []
+    for block in message.content:
+        if hasattr(block, "text"):
+            text_parts.append(block.text)
+    return "".join(text_parts).strip()
 
 
 @contextmanager
@@ -95,13 +117,13 @@ def build_prompt(content: str, num_questions: int) -> str:
     return f"""다음은 기사 본문이다. 본문 내용만 근거로 금융·경제 교육용 객관식 퀴즈를 정확히 {num_questions}문제 만들어라.
 각 문제는 4지선다(보기 4개)이다. 본문에 답의 근거가 분명해야 하며 본문에 없는 사실을 꾸미지 마라.
 
-[문항 유형 균형 — 반드시 지킬 것]
-- 전체 문항이 비율·금액·구체 수치·연도 맞히기에 치우치지 않도록 한다. "정확히 몇 %/얼마/몇 년"류는 전체 중 최대 1문항까지이며, 가능하면 아예 두지 말고 수치 없이도 이해되는 질문으로 쓴다.
-- 다음 성격이 골고루 나오게 배분한다 (문항 수가 4개면 (1)~(4)를 각각 정확히 1문항씩. 문항 수가 다르면 (1)~(3)은 반드시 각 1문항 이상 포함하고, 나머지는 (4)와 섞어 균형 있게):
-  (1) 개념 이해형: 용어·제도·원리·정의를 본문 맥락에서 묻는 문제
-  (2) 추론형: 본문에 직접 쓰인 문장만으로는 단순 암기가 아니라, 논지·원인·결과·전망 등을 종합·추론해야 풀 수 있는 문제 (환각 없이 본문 근거 범위 안에서만)
-  (3) 핵심 주제형: 이 기사의 중심 이슈·핵심 메시지·다루는 대상(무엇을 설명하는지)을 묻는 문제
-  (4) 나머지 문항: 인과관계, 주장 vs 근거, 맥락 비교, 정책·시장에 대한 해석 등으로 구성하되, 위 세 유형과 겹치지 않게 다양하게 (역시 수치 편중 금지)
+[이 1문항 출제 지침]
+- 문항은 단 1개뿐이다. 4지선다이며, 비율·금액·연도·정확한 숫자만 맞추는 문제는 피하고, 수치 없이도 이해되는 질문을 우선한다.
+- 아래 중 본문에 가장 알맞은 성격 **하나**를 택해 그 한 문항만 만든다 (여러 유형을 섞지 말고 하나로 일관되게):
+  · 개념 이해형 — 용어·제도·원리·정의
+  · 추론형 — 본문 근거 안에서 논지·원인·결과·전망 등을 짐작·종합
+  · 핵심 주제형 — 기사의 중심 이슈·핵심 메시지
+  · 맥락형 — 인과, 주장과 근거, 비교·해석 등
 
 출력은 설명 없이 오직 JSON 배열만 출력한다. (앞뒤에 다른 텍스트 금지)
 반드시 원소 개수는 {num_questions}개이다.
@@ -134,11 +156,7 @@ def generate_quiz_list(client: Anthropic, model: str, content: str) -> List[Dict
         messages=[{"role": "user", "content": prompt}],
     )
 
-    text_parts: List[str] = []
-    for block in msg.content:
-        if hasattr(block, "text"):
-            text_parts.append(block.text)
-    raw = "".join(text_parts)
+    raw = collect_message_text(msg)
 
     quizzes = extract_json_array(raw)
     if not isinstance(quizzes, list):
@@ -161,8 +179,8 @@ def generate_quiz_list(client: Anthropic, model: str, content: str) -> List[Dict
 
 @app.post("/quiz", response_model=QuizResponse)
 def create_quiz(req: QuizRequest) -> QuizResponse:
-    """article_id로 본문을 읽어 퀴즈 4문항을 생성해 JSON으로 반환"""
-    content = fetch_content_by_article_id(req.article_id)
+    """article_id로 본문을 읽어 퀴즈 1문항을 생성해 JSON으로 반환"""
+    content = (req.content or "").strip() or fetch_content_by_article_id(req.article_id)
     if content is None:
         raise HTTPException(
             status_code=404,
@@ -190,6 +208,40 @@ def create_quiz(req: QuizRequest) -> QuizResponse:
     return QuizResponse(article_id=req.article_id, quiz=items)
 
 
+@app.post("/news/interest-insight", response_model=InterestInsightResponse)
+def create_interest_insight(req: InterestInsightRequest) -> InterestInsightResponse:
+    """최근 관심 토픽 목록을 받아 사용자에게 보여줄 AI 한마디를 생성"""
+    topics = [topic for topic in req.topics if topic.name.strip()]
+    if not topics:
+        raise HTTPException(status_code=400, detail="topics가 비어 있습니다.")
+
+    try:
+        client = get_client()
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+
+    topic_lines = "\n".join(f"- {topic.name.strip()}: {topic.count}회" for topic in topics[:10])
+    prompt = f"""아래는 사용자가 최근 한 달 동안 많이 본 금융·경제 뉴스 토픽과 조회 횟수다.
+사용자에게 보여줄 한국어 인사이트를 1문장으로만 작성하라.
+과장하지 말고, 투자 조언처럼 단정하지 말고, 관심 흐름을 자연스럽게 요약하라.
+
+토픽:
+{topic_lines}
+"""
+    try:
+        msg = client.messages.create(
+            model=get_model_id(),
+            max_tokens=256,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        insight = collect_message_text(msg).strip().strip('"')
+        if not insight:
+            raise ValueError("빈 응답")
+        return InterestInsightResponse(insight=insight)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"인사이트 생성 실패: {e}") from e
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -198,4 +250,4 @@ def health():
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host=APP_HOST, port=APP_PORT)
