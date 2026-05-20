@@ -84,6 +84,9 @@ jobs:
             fi
             sudo systemctl enable --now docker
             sudo mkdir -p "${DEPLOY_PATH}"
+            sudo docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+            sudo docker image prune -af >/dev/null 2>&1 || true
+            sudo docker builder prune -af >/dev/null 2>&1 || true
           EOF
 
           ssh -i ~/.ssh/ec2_deploy -o StrictHostKeyChecking=accept-new "${EC2_SSH_USER}@${HOST}" "sudo tee '${ENV_PATH}' >/dev/null && sudo chown root:root '${ENV_PATH}' && sudo chmod 600 '${ENV_PATH}'" < fined-ai.env
@@ -92,7 +95,6 @@ jobs:
 
           ssh -i ~/.ssh/ec2_deploy -o StrictHostKeyChecking=accept-new "${EC2_SSH_USER}@${HOST}" bash -s << EOF
             set -euo pipefail
-            sudo docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
             sudo docker run -d \
               --name "${CONTAINER_NAME}" \
               --restart unless-stopped \
